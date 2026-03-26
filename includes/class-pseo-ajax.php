@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class PSEO_Ajax {
 
 	public function __construct() {
-		foreach ( [ 'pseo_generate', 'pseo_delete_pages', 'pseo_preview_data', 'pseo_save_project', 'pseo_delete_project' ] as $a ) {
+		foreach ( [ 'pseo_generate', 'pseo_delete_pages', 'pseo_preview_data', 'pseo_save_project', 'pseo_delete_project', 'pseo_upload_csv' ] as $a ) {
 			add_action( "wp_ajax_{$a}", [ $this, str_replace( 'pseo_', '', $a ) ] );
 		}
 	}
@@ -67,5 +67,60 @@ class PSEO_Ajax {
 		PSEO_Generator::delete_generated( $id );
 		PSEO_Database::delete_project( $id );
 		wp_send_json_success();
+	}
+
+	public function upload_csv(): void {
+		$this->verify();
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
+		if ( empty( $_FILES['csv_file'] ) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK ) {
+			wp_send_json_error( [ 'message' => 'No file uploaded or upload error.' ] );
+		}
+
+		// Require WordPress file handling functions.
+		if ( ! function_exists( 'wp_handle_upload' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
+		$file = $_FILES['csv_file'];
+		$upload_overrides = [
+			'test_form' => false,
+			'mimes'     => [ 'csv' => 'text/csv', 'txt' => 'text/plain' ],
+		];
+
+		$uploaded = wp_handle_upload( $file, $upload_overrides );
+
+		if ( isset( $uploaded['error'] ) ) {
+			wp_send_json_error( [ 'message' => $uploaded['error'] ] );
+		}
+
+		// Insert into media library.
+		$attachment_id = wp_insert_attachment(
+			[
+				'post_mime_type' => $uploaded['type'],
+				'post_title'     => sanitize_file_name( basename( $uploaded['file'] ) ),
+				'post_content'   => '',
+				'post_status'    => 'inherit',
+			],
+			$uploaded['file']
+		);
+
+		if ( is_wp_error( $attachment_id ) ) {
+			wp_send_json_error( [ 'message' => 'Failed to create media attachment.' ] );
+		}
+
+		// Generate attachment metadata.
+		if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+		}
+		wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
+
+		wp_send_json_success(
+			[
+				'url'      => $uploaded['url'],
+				'filename' => basename( $uploaded['file'] ),
+			]
+		);
 	}
 }
