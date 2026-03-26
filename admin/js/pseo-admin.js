@@ -35,6 +35,28 @@
     $(document).on('change', '#pseo-source-type', updateSourcePanels);
     updateSourcePanels();
 
+    	/* ── CSV File Upload ────────────────────────────────────── */
+	$(document).on('click', '#pseo-upload-csv-btn', function () {
+		var fileFrame;
+		if (fileFrame) {
+			fileFrame.open();
+			return;
+		}
+		fileFrame = wp.media({
+			title: 'Select CSV File',
+			button: { text: 'Use this file' },
+			multiple: false,
+			library: { type: 'text/csv' }
+		});
+		fileFrame.on('select', function () {
+			var attachment = fileFrame.state().get('selection').first().toJSON();
+			$('#pseo-csv-file-url').val(attachment.url);
+			$('#pseo-csv-filename').text(attachment.filename);
+			notice('CSV file selected: ' + attachment.filename);
+		});
+		fileFrame.open();
+	});
+
     /* ── Schema hints ───────────────────────────────────────── */
     var schemaHints = {
         'LocalBusiness': 'Required columns: <strong>city</strong>, <strong>address</strong>, <strong>phone</strong>. Optional: business_name, state, zip, price_range.',
