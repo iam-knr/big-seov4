@@ -94,19 +94,29 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                         <select id="pseo-source-type" name="source_type">
                             <?php $st = $project->source_type ?? 'csv_url'; ?>
                             <option value="csv_url"       <?php selected( $st, 'csv_url' ); ?>>       📄 CSV via URL</option>
+							                        <option value="csv_upload" <?php selected( $st, 'csv_upload' ); ?>> 📤 CSV via File Upload</option>
                         </select>
                     </td>
                 </tr>
 
                 <!-- CSV / CSV Upload -->
-                <tr class="pseo-source-panel pseo-source-csv_url pseo-source-csv_upload">
-                    <th><?php esc_html_e( 'CSV File URL / Server Path', 'knr-pseo-generator' ); ?></th>
+            <tr class="pseo-source-panel pseo-source-csv_url">                    <th><?php esc_html_e( 'CSV File URL / Server Path', 'knr-pseo-generator' ); ?></th>
                     <td>
                         <input type="text" name="source_config[file_url]" class="large-text"
                                value="<?php echo esc_html( $config['file_url'] ?? '' ); ?>"
                                placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv">
                     </td>
                 </tr>
+				            <!-- CSV File Upload Panel -->
+            <tr class="pseo-source-panel pseo-source-csv_upload" style="display:none;">
+                <th><?php esc_html_e( 'Upload CSV File', 'knr-pseo-generator' ); ?></th>
+                <td>
+                    <button type="button" id="pseo-upload-csv-btn" class="button"><?php esc_html_e( 'Choose File', 'knr-pseo-generator' ); ?></button>
+                    <span id="pseo-csv-filename" style="margin-left: 10px; color: #666;"></span>
+                    <input type="hidden" name="source_config[file_url]" id="pseo-csv-file-url" value="<?php echo esc_html( $config['file_url'] ?? '' ); ?>">
+                    <p class="description"><?php esc_html_e( 'Upload a CSV file to your media library. The file will be processed and used as your data source.', 'knr-pseo-generator' ); ?></p>
+                </td>
+            </tr>
 						</table>
 	</div>
         <!-- CARD 3 – URL Structure -->
