@@ -41,6 +41,12 @@ class PSEO_Admin
 		wp_enqueue_style('pseo-admin', PSEO_PLUGIN_URL . 'admin/css/pseo-admin.css', [], PSEO_VERSION);
 		wp_enqueue_script('pseo-admin', PSEO_PLUGIN_URL . 'admin/js/pseo-admin.js', ['jquery'], PSEO_VERSION, true);
 
+				// Enqueue WordPress media library for CSV file upload.
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- No action taken based on value.
+		if ( isset( $_GET['page'] ) && $_GET['page'] === 'pseo-project-edit' ) {
+			wp_enqueue_media();
+		}
+
 		wp_localize_script('pseo-admin', 'PSEO', [
 			'ajax_url' => admin_url('admin-ajax.php'),
 			'nonce' => wp_create_nonce('pseo_nonce'),
