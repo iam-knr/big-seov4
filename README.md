@@ -3,7 +3,7 @@ Contributors: kailasnathr
 Tags: programmatic-seo, bulk-page-generator, csv, seo, location-pages
 Requires at least: 5.5
 Tested up to: 6.9
-Stable tag: 2.2.0
+Stable tag: 2.4.0
 Requires PHP: 7.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -145,6 +145,9 @@ The plugin is now focused exclusively on CSV-based programmatic SEO workflows. C
 
 == Changelog ==
 
+= 2.4.0 =
+* Minor bug fixes and stability improvements
+
 = 2.2.0 =
 * Renamed plugin to "Big SEO Programmatic" to better reflect its programmatic SEO and bulk page generator capabilities
 * Simplified data sources to CSV only (URL + server path) for focused programmatic SEO workflows
@@ -178,6 +181,9 @@ The plugin is now focused exclusively on CSV-based programmatic SEO workflows. C
 * Nonce-protected AJAX security on all bulk page generator endpoints
 
 == Upgrade Notice ==
+
+= 2.4.0 =
+Minor bug fixes. Recommended update for all users.
 
 = 2.2.0 =
 Major stability release for all programmatic SEO users. Resolves white screen bug on bulk page generation, AJAX save failure, JS loading issues, and UI overflow. Plugin renamed to Big SEO Programmatic. Strongly recommended for all users.
