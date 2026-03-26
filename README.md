@@ -3,7 +3,7 @@ Contributors: kailasnathr
 Tags: programmatic-seo, bulk-page-generator, csv, seo, location-pages
 Requires at least: 5.5
 Tested up to: 6.9
-Stable tag: 2.4.0
+Stable tag: 2.4.1
 Requires PHP: 7.4
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -145,6 +145,11 @@ The plugin is now focused exclusively on CSV-based programmatic SEO workflows. C
 
 == Changelog ==
 
+= 2.4.1 =
+* Updated CSV via URL field placeholder to `https://yourdomain.com/yourdatasheet.csv` for clarity
+* Fixed `esc_html` → `esc_attr` on CSV URL value output (security/correctness fix)
+* Added helper description text below the CSV URL input field
+
 = 2.4.0 =
 * Minor bug fixes and stability improvements
 
@@ -181,6 +186,9 @@ The plugin is now focused exclusively on CSV-based programmatic SEO workflows. C
 * Nonce-protected AJAX security on all bulk page generator endpoints
 
 == Upgrade Notice ==
+
+= 2.4.1 =
+UI clarity update. CSV URL placeholder now shows `https://yourdomain.com/yourdatasheet.csv`. Includes minor security fix for attribute escaping.
 
 = 2.4.0 =
 Minor bug fixes. Recommended update for all users.
