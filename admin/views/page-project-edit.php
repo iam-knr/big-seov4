@@ -50,7 +50,7 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                     <td>
                         <select name="post_type">
 // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
-						                            <?php foreach ( $post_types as $pt ) : ?>
+			                            <?php foreach ( $post_types as $pt ) : ?>
                                 <option value="<?php echo esc_html( $pt->name ); ?>"
                                     <?php selected( $project->post_type ?? 'page', $pt->name ); ?>>
                                     <?php echo esc_html( $pt->label ); ?> (<?php echo esc_html( $pt->name ); ?>)
@@ -65,8 +65,8 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                         <select name="template_id">
                             <option value="0"><?php esc_html_e( '— None (blank content) —', 'knr-pseo-generator' ); ?></option>
 // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
-						                            <?php foreach ( $template_posts as $tp ) : ?>
-						<option value="<?php echo esc_attr( $tp->ID ); ?>" <?php selected( $project->template_id ?? 0, $tp->ID ); ?>>                                    <?php echo esc_html( $tp->post_title ); ?>
+			                            <?php foreach ( $template_posts as $tp ) : ?>
+			<option value="<?php echo esc_attr( $tp->ID ); ?>" <?php selected( $project->template_id ?? 0, $tp->ID ); ?>>                                    <?php echo esc_html( $tp->post_title ); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -99,21 +99,22 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                     </td>
                 </tr>
 
-                <!-- CSV / CSV Upload -->
-            <tr class="pseo-source-panel pseo-source-csv_url">                    <th><?php esc_html_e( 'CSV File URL / Server Path', 'knr-pseo-generator' ); ?></th>
+                <!-- CSV URL Panel -->
+            <tr class="pseo-source-panel pseo-source-csv_url">                    <th><?php esc_html_e( 'CSV File URL', 'knr-pseo-generator' ); ?></th>
                     <td>
                         <input type="text" name="source_config[file_url]" class="large-text"
-                               value="<?php echo esc_html( $config['file_url'] ?? '' ); ?>"
-                               placeholder="https://docs.google.com/spreadsheets/d/.../export?format=csv">
+                               value="<?php echo esc_attr( $config['file_url'] ?? '' ); ?>"
+                               placeholder="https://yourdomain.com/yourdatasheet.csv">
+                        <p class="description"><?php esc_html_e( 'Enter the direct URL to your publicly accessible CSV file.', 'knr-pseo-generator' ); ?></p>
                     </td>
                 </tr>
-				            <!-- CSV File Upload Panel -->
+			            <!-- CSV File Upload Panel -->
             <tr class="pseo-source-panel pseo-source-csv_upload" style="display:none;">
                 <th><?php esc_html_e( 'Upload CSV File', 'knr-pseo-generator' ); ?></th>
                 <td>
                     <button type="button" id="pseo-upload-csv-btn" class="button"><?php esc_html_e( 'Choose File', 'knr-pseo-generator' ); ?></button>
                     <span id="pseo-csv-filename" style="margin-left: 10px; color: #666;"></span>
-                    <input type="hidden" name="source_config[file_url]" id="pseo-csv-file-url" value="<?php echo esc_html( $config['file_url'] ?? '' ); ?>">
+                    <input type="hidden" name="source_config[file_url]" id="pseo-csv-file-url" value="<?php echo esc_attr( $config['file_url'] ?? '' ); ?>">
                     <p class="description"><?php esc_html_e( 'Upload a CSV file to your media library. The file will be processed and used as your data source.', 'knr-pseo-generator' ); ?></p>
                 </td>
             </tr>
