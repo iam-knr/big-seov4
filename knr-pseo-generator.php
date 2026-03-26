@@ -3,7 +3,7 @@
  * Plugin Name: Big SEO Programmatic
  * Plugin URI:  https://iam-knr.github.io/pseo_byknr/
  * Description: Generate thousands of SEO-optimised pages from CSV. Unlimited rows, built-in schema, meta, sitemap, cron & WP-CLI — all free.
- * Version:     2.2.0
+ * Version:     2.4.0
  * Author:      Kailas Nath R
  * Author URI:  https://www.linkedin.com/in/iamknr
  * License:     GPL-2.0-or-later
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('PSEO_VERSION', '2.2.0');
+define('PSEO_VERSION', '2.4.0');
 define('PSEO_PLUGIN_FILE', __FILE__);
 define('PSEO_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PSEO_PLUGIN_URL', plugin_dir_url(__FILE__));
