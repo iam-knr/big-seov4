@@ -56,7 +56,7 @@ class PSEO_Generator {
 			// FIX #4: resolve slug collisions by appending a numeric suffix.
 			$slug   = $base_slug;
 			$suffix = 2;
-			while ( isset( $slugs_used[ $slug ] ) ) {
+			while ( isset( $slugs_used[ $slug ] )  || get_page_by_path( $slug, OBJECT, $project->post_type )) {
 				$slug = $base_slug . '-' . $suffix;
 				$suffix++;
 			}
