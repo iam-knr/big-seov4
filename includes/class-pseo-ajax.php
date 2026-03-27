@@ -41,20 +41,56 @@ class PSEO_Ajax {
 
 	public function save_project(): void {
 		$this->verify();
+
+		/**
+		 * FIX #5 — source_config is a JSON string and must NOT be run through
+		 * sanitize_textarea_field(). That function encodes HTML entities, which
+		 * corrupts the JSON (e.g. '&' in URLs becomes '&amp;'). When the saved
+		 * config is decoded later the URL is broken and DataSource::fetch()
+		 * returns an empty array — causing 0 pages to generate.
+		 *
+		 * Instead we: wp_unslash() the raw POST value, json_decode() it to
+		 * validate structure, sanitize each individual sub-field, then
+		 * re-encode it cleanly for storage.
+		 */
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
+		$raw_config = wp_unslash( $_POST['source_config'] ?? '{}' );
+		$config_arr = json_decode( $raw_config, true );
+		if ( ! is_array( $config_arr ) ) {
+			$config_arr = [];
+		}
+
+		// Sanitize individual sub-fields that can hold user-controlled data.
+		if ( isset( $config_arr['file_url'] ) ) {
+			$config_arr['file_url'] = esc_url_raw( $config_arr['file_url'] );
+		}
+		if ( isset( $config_arr['file_path'] ) ) {
+			$config_arr['file_path'] = sanitize_text_field( $config_arr['file_path'] );
+		}
+		if ( isset( $config_arr['sheet_id'] ) ) {
+			$config_arr['sheet_id'] = sanitize_text_field( $config_arr['sheet_id'] );
+		}
+		if ( isset( $config_arr['url'] ) ) {
+			$config_arr['url'] = esc_url_raw( $config_arr['url'] );
+		}
+
+		$source_config_clean = wp_json_encode( $config_arr );
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
 		$data = [
-			'name'			=> sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
-			'post_type'		=> sanitize_key( wp_unslash( $_POST['post_type'] ?? 'page' ) ),
-			'template_id'	=> (int) ( $_POST['template_id'] ?? 0 ),
-			'source_type'	=> sanitize_key( wp_unslash( $_POST['source_type'] ?? 'csv_url' ) ),
-						'source_config' => sanitize_textarea_field( wp_unslash( $_POST['source_config'] ?? '{}' ) ),
-			'url_pattern'	=> sanitize_text_field( wp_unslash( $_POST['url_pattern'] ?? '' ) ),
-			'seo_title'		=> sanitize_text_field( wp_unslash( $_POST['seo_title'] ?? '' ) ),
-			'seo_desc'		=> sanitize_textarea_field( wp_unslash( $_POST['seo_desc'] ?? '' ) ),
-			'robots'		=> sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
-			'schema_type'	=> sanitize_text_field( wp_unslash( $_POST['schema_type'] ?? '' ) ),
-			'sync_interval'	=> sanitize_key( wp_unslash( $_POST['sync_interval'] ?? 'manual' ) ),
+			'name'          => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
+			'post_type'     => sanitize_key( wp_unslash( $_POST['post_type'] ?? 'page' ) ),
+			'template_id'   => (int) ( $_POST['template_id'] ?? 0 ),
+			'source_type'   => sanitize_key( wp_unslash( $_POST['source_type'] ?? 'csv_url' ) ),
+			'source_config' => $source_config_clean,
+			'url_pattern'   => sanitize_text_field( wp_unslash( $_POST['url_pattern'] ?? '' ) ),
+			'seo_title'     => sanitize_text_field( wp_unslash( $_POST['seo_title'] ?? '' ) ),
+			'seo_desc'      => sanitize_textarea_field( wp_unslash( $_POST['seo_desc'] ?? '' ) ),
+			'robots'        => sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
+			'schema_type'   => sanitize_text_field( wp_unslash( $_POST['schema_type'] ?? '' ) ),
+			'sync_interval' => sanitize_key( wp_unslash( $_POST['sync_interval'] ?? 'manual' ) ),
 		];
+
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
 		if ( ! empty( $_POST['id'] ) ) $data['id'] = (int) $_POST['id'];
 		wp_send_json_success( [ 'id' => PSEO_Database::save_project( $data ) ] );
@@ -71,7 +107,6 @@ class PSEO_Ajax {
 
 	public function upload_csv(): void {
 		$this->verify();
-
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
 		if ( empty( $_FILES['csv_file'] ) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK ) {
 			wp_send_json_error( [ 'message' => 'No file uploaded or upload error.' ] );
@@ -83,14 +118,13 @@ class PSEO_Ajax {
 		}
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		$file = $_FILES['csv_file'];
+		$file             = $_FILES['csv_file'];
 		$upload_overrides = [
 			'test_form' => false,
 			'mimes'     => [ 'csv' => 'text/csv', 'txt' => 'text/plain' ],
 		];
 
 		$uploaded = wp_handle_upload( $file, $upload_overrides );
-
 		if ( isset( $uploaded['error'] ) ) {
 			wp_send_json_error( [ 'message' => $uploaded['error'] ] );
 		}
