@@ -1,10 +1,6 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotValidated -- All $_POST vars use (int) casting or ?? defaults
-// phpcs:disable WordPress.Security.NonceVerification.Missing -- Nonce verified in verify() method
-// phpcs:disable WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- Using (int) cast
-// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Using (int) cast or wp_json_encode
 class PSEO_Ajax {
 
 	public function __construct() {
@@ -29,7 +25,8 @@ class PSEO_Ajax {
 		$this->verify();
 		$project_id = (int) ( $_POST['project_id'] ?? 0 );
 		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
-		$deleted = PSEO_Generator::delete_pages( $project_id );
+		// FIXED: method is delete_generated(), not delete_pages()
+		$deleted = PSEO_Generator::delete_generated( $project_id );
 		wp_send_json_success( [ 'deleted' => $deleted ] );
 	}
 
@@ -37,10 +34,11 @@ class PSEO_Ajax {
 		$this->verify();
 		$project_id = (int) ( $_POST['project_id'] ?? 0 );
 		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
+		// FIXED: fetch() takes a project object, not (source_type, config, limit)
 		$project = PSEO_Database::get_project( $project_id );
 		if ( ! $project ) wp_send_json_error( [ 'message' => 'Project not found.' ] );
-		$source_config = json_decode( $project->source_config, true ) ?: [];
-		$rows = PSEO_DataSource::fetch( $project->source_type, $source_config, 5 );
+		$rows = PSEO_DataSource::fetch( $project );
+		$rows = array_slice( $rows, 0, 5 );
 		wp_send_json_success( [ 'rows' => $rows, 'count' => count( $rows ) ] );
 	}
 
@@ -50,8 +48,8 @@ class PSEO_Ajax {
 		$project_id  = (int) ( $_POST['project_id'] ?? 0 );
 		$source_type = sanitize_text_field( wp_unslash( $_POST['source_type'] ?? '' ) );
 
-		// Decode and individually sanitize source_config sub-fields (never run json through sanitize_textarea_field).
-		$raw_config = json_decode( wp_unslash( $_POST['source_config'] ?? '{}' ), true ) ?: [];
+		// Decode and individually sanitize source_config sub-fields.
+		$raw_config   = json_decode( wp_unslash( $_POST['source_config'] ?? '{}' ), true ) ?: [];
 		$clean_config = [];
 
 		switch ( $source_type ) {
@@ -72,7 +70,6 @@ class PSEO_Ajax {
 				$clean_config['per_page']   = (int) ( $raw_config['per_page'] ?? 100 );
 				$clean_config['max_pages']  = (int) ( $raw_config['max_pages'] ?? 10 );
 				$clean_config['page_param'] = sanitize_text_field( $raw_config['page_param'] ?? 'page' );
-				// Sanitize headers array: only allow string key=>value pairs.
 				if ( ! empty( $raw_config['headers'] ) && is_array( $raw_config['headers'] ) ) {
 					foreach ( $raw_config['headers'] as $k => $v ) {
 						$clean_config['headers'][ sanitize_text_field( $k ) ] = sanitize_text_field( $v );
@@ -80,12 +77,12 @@ class PSEO_Ajax {
 				}
 				break;
 			default:
-				// Passthrough with basic sanitization for unknown source types.
 				array_walk_recursive( $raw_config, function( &$v ) { $v = sanitize_text_field( (string) $v ); } );
 				$clean_config = $raw_config;
 		}
 
 		$data = [
+			'id'            => $project_id, // FIXED: DB::save_project() needs 'id' to decide insert vs update
 			'name'          => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
 			'source_type'   => $source_type,
 			'source_config' => wp_json_encode( $clean_config ),
@@ -99,14 +96,11 @@ class PSEO_Ajax {
 			'robots'        => sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
 		];
 
-		if ( $project_id ) {
-			PSEO_Database::update_project( $project_id, $data );
-			wp_send_json_success( [ 'project_id' => $project_id, 'action' => 'updated' ] );
-		} else {
-			$project_id = PSEO_Database::create_project( $data );
-			if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Failed to create project.' ] );
-			wp_send_json_success( [ 'project_id' => $project_id, 'action' => 'created' ] );
-		}
+		// FIXED: DB class has save_project( $data ), not create_project/update_project
+		$saved_id = PSEO_Database::save_project( $data );
+		if ( ! $saved_id ) wp_send_json_error( [ 'message' => 'Failed to save project.' ] );
+		$action = $project_id ? 'updated' : 'created';
+		wp_send_json_success( [ 'project_id' => $saved_id, 'action' => $action ] );
 	}
 
 	public function delete_project(): void {
