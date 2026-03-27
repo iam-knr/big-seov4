@@ -7,117 +7,118 @@ class PSEO_DataSource {
 		$config = json_decode( $project->source_config, true ) ?: [];
 		switch ( $project->source_type ) {
 			case 'csv_upload':
-			case 'csv_url':        return self::fetch_csv( $config );
-			case 'google_sheets':  return self::fetch_google_sheets( $config );
-			case 'json_url':       return self::fetch_json( $config );
-			case 'rest_api':       return self::fetch_rest_api( $config );
-			default:               return [];
+			case 'csv_url':
+				return self::fetch_csv( $config );
+			// FIX #18: google_sheets is kept as an active source since it
+			// only makes an outbound request to a publicly documented
+			// Google Spreadsheets export URL.  The json_url and rest_api
+			// sources are REMOVED from fetch() to eliminate orphaned dead
+			// code that accepted arbitrary user-supplied URLs with no
+			// SSRF protection. Admin UI never exposes those options.
+			case 'google_sheets':
+				return self::fetch_google_sheets( $config );
+			default:
+				return [];
 		}
 	}
 
-	public static function fetch_csv( array $config ): array {
+	/**
+	 * FIX #16 — file_path is now validated against the WordPress uploads
+	 * directory so an attacker cannot point it at an arbitrary server
+	 * file (e.g. /etc/passwd or wp-config.php).  Only paths that resolve
+	 * to a location inside wp_upload_dir() are accepted.
+	 */
+	private static function fetch_csv( array $config ): array {
 		$path = $config['file_path'] ?? '';
 		$url  = $config['file_url']  ?? '';
-		if ( $path && file_exists( $path ) ) return self::parse_csv_string( file_get_contents( $path ) );
+
+		if ( $path ) {
+			// Resolve any ../ or symlinks to a real path.
+			$real   = realpath( $path );
+			$upload = wp_upload_dir();
+			$base   = realpath( $upload['basedir'] );
+
+			// FIX #16: reject any path that is not inside the uploads dir.
+			if (
+				$real !== false &&
+				$base !== false &&
+				strncmp( $real, $base, strlen( $base ) ) === 0 &&
+				file_exists( $real )
+			) {
+				return self::parse_csv_string( file_get_contents( $real ) );
+			}
+		}
+
 		if ( $url ) {
 			$r = wp_remote_get( $url, [ 'timeout' => 30 ] );
 			return is_wp_error( $r ) ? [] : self::parse_csv_string( wp_remote_retrieve_body( $r ) );
 		}
+
 		return [];
 	}
 
 	/**
 	 * Parse a raw CSV string into an array of associative rows.
 	 *
-	 * FIX #1 — previously rows whose column count did not exactly match the
-	 * header count were silently discarded. CSV values that contain commas are
-	 * wrapped in quotes by RFC-4180, but some exporters produce extra or
-	 * missing delimiters. We now pad short rows with empty strings and trim
-	 * long rows instead of dropping them, so every data row survives.
+	 * FIX #17 — Use fgetcsv() on an in-memory stream instead of
+	 * str_getcsv( $content, "\n" ) which incorrectly splits on newlines
+	 * inside properly quoted CSV cells (multi-line values).  fgetcsv()
+	 * correctly handles RFC-4180 quoted fields with embedded newlines.
 	 */
 	private static function parse_csv_string( string $content ): array {
+		if ( empty( $content ) ) return [];
+
 		// Normalise line endings.
 		$content = str_replace( [ "\r\n", "\r" ], "\n", $content );
 
-		// Split into lines while preserving quoted newlines via str_getcsv.
-		$lines = str_getcsv( $content, "\n" );
-		if ( empty( $lines ) ) return [];
+		// FIX #17: open a memory stream so fgetcsv() can parse correctly,
+		// honouring quoted multi-line fields per RFC 4180.
+		$handle = fopen( 'php://memory', 'r+' );
+		if ( ! $handle ) return [];
+		fwrite( $handle, $content );
+		rewind( $handle );
 
 		// First non-empty line is the header.
-		$header_line = '';
-		while ( ! empty( $lines ) && trim( $header_line ) === '' ) {
-			$header_line = array_shift( $lines );
-		}
-		if ( trim( $header_line ) === '' ) return [];
-
-		$headers     = array_map( 'trim', str_getcsv( $header_line ) );
-		$header_count = count( $headers );
-		$rows        = [];
-
-		foreach ( $lines as $line ) {
-			if ( trim( $line ) === '' ) continue;
-
-			$values = str_getcsv( $line );
-
-			// FIX #1: pad short rows with empty strings; trim extra columns.
-			// This prevents silent row-dropping when a CSV has minor formatting
-			// inconsistencies (trailing commas, quoted commas, etc.).
-			if ( count( $values ) < $header_count ) {
-				$values = array_pad( $values, $header_count, '' );
-			} elseif ( count( $values ) > $header_count ) {
-				$values = array_slice( $values, 0, $header_count );
+		$headers = null;
+		while ( $headers === null ) {
+			$line = fgetcsv( $handle );
+			if ( $line === false ) {
+				fclose( $handle );
+				return [];
 			}
-
-			$rows[] = array_combine( $headers, $values );
+			// Skip blank lines.
+			if ( array_filter( $line ) ) {
+				$headers = array_map( 'trim', $line );
+			}
 		}
 
+		$header_count = count( $headers );
+		$rows         = [];
+
+		while ( ( $line = fgetcsv( $handle ) ) !== false ) {
+			if ( ! array_filter( $line ) ) continue; // skip empty rows
+
+			// Pad short rows; trim extra columns from long rows.
+			$line  = array_pad( $line, $header_count, '' );
+			$line  = array_slice( $line, 0, $header_count );
+			$rows[] = array_combine( $headers, $line );
+		}
+
+		fclose( $handle );
 		return $rows;
 	}
 
-	public static function fetch_google_sheets( array $config ): array {
+	/**
+	 * Fetch a public Google Sheet exported as CSV.
+	 * Only connects to docs.google.com — the URL is constructed here,
+	 * not supplied by the user as a raw URL, so SSRF risk is minimal.
+	 */
+	private static function fetch_google_sheets( array $config ): array {
 		$sheet_id = $config['sheet_id'] ?? '';
 		$gid      = $config['gid']      ?? '0';
 		if ( ! $sheet_id ) return [];
 		$url = "https://docs.google.com/spreadsheets/d/{$sheet_id}/export?format=csv&gid={$gid}";
 		$r   = wp_remote_get( $url, [ 'timeout' => 30 ] );
 		return is_wp_error( $r ) ? [] : self::parse_csv_string( wp_remote_retrieve_body( $r ) );
-	}
-
-	public static function fetch_json( array $config ): array {
-		$url  = $config['url']  ?? '';
-		$path = $config['path'] ?? '';
-		if ( ! $url ) return [];
-		$r = wp_remote_get( $url, [ 'timeout' => 30 ] );
-		if ( is_wp_error( $r ) ) return [];
-		$data = json_decode( wp_remote_retrieve_body( $r ), true );
-		if ( $path ) {
-			foreach ( explode( '.', $path ) as $key ) $data = $data[ $key ] ?? [];
-		}
-		if ( ! is_array( $data ) ) return [];
-		return isset( $data[0] ) && is_array( $data[0] ) ? $data : [ $data ];
-	}
-
-	public static function fetch_rest_api( array $config ): array {
-		$url      = $config['url']        ?? '';
-		$path     = $config['data_path']  ?? '';
-		$headers  = $config['headers']    ?? [];
-		$per_page = (int) ( $config['per_page']  ?? 100 );
-		$max_pages = (int) ( $config['max_pages'] ?? 10 );
-		$param    = $config['page_param'] ?? 'page';
-		if ( ! $url ) return [];
-		$all = []; $page = 1;
-		do {
-			$req_url  = add_query_arg( [ $param => $page, 'per_page' => $per_page ], $url );
-			$response = wp_remote_get( $req_url, [ 'timeout' => 30, 'headers' => $headers ] );
-			if ( is_wp_error( $response ) ) break;
-			$data = json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( $path ) {
-				foreach ( explode( '.', $path ) as $key ) $data = $data[ $key ] ?? [];
-			}
-			if ( ! is_array( $data ) || empty( $data ) ) break;
-			$all = array_merge( $all, $data );
-			$page++;
-		} while ( $page <= $max_pages );
-		return $all;
 	}
 }
