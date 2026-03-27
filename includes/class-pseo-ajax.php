@@ -8,9 +8,8 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class PSEO_Ajax {
 
 	public function __construct() {
-		foreach ( [ 'pseo_generate', 'pseo_delete_pages', 'pseo_preview_data', 'pseo_save_project', 'pseo_delete_project', 'pseo_upload_csv' ] as $a ) {
+		foreach ( [ 'pseo_generate', 'pseo_delete_pages', 'pseo_preview_data', 'pseo_save_project', 'pseo_delete_project', 'pseo_upload_csv' ] as $a )
 			add_action( "wp_ajax_{$a}", [ $this, str_replace( 'pseo_', '', $a ) ] );
-		}
 	}
 
 	private function verify(): void {
@@ -20,141 +19,112 @@ class PSEO_Ajax {
 
 	public function generate(): void {
 		$this->verify();
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		wp_send_json_success( PSEO_Generator::run( (int) $_POST['project_id'], ! empty( $_POST['delete_orphans'] ) ) );
+		$project_id = (int) ( $_POST['project_id'] ?? 0 );
+		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
+		$result = PSEO_Generator::run( $project_id );
+		wp_send_json_success( $result );
 	}
 
 	public function delete_pages(): void {
 		$this->verify();
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		wp_send_json_success( [ 'deleted' => PSEO_Generator::delete_generated( (int) $_POST['project_id'] ) ] );
+		$project_id = (int) ( $_POST['project_id'] ?? 0 );
+		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
+		$deleted = PSEO_Generator::delete_pages( $project_id );
+		wp_send_json_success( [ 'deleted' => $deleted ] );
 	}
 
 	public function preview_data(): void {
 		$this->verify();
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		$project = PSEO_Database::get_project( (int) $_POST['project_id'] );
+		$project_id = (int) ( $_POST['project_id'] ?? 0 );
+		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
+		$project = PSEO_Database::get_project( $project_id );
 		if ( ! $project ) wp_send_json_error( [ 'message' => 'Project not found.' ] );
-		$rows = PSEO_DataSource::fetch( $project );
-		wp_send_json_success( [ 'count' => count( $rows ), 'preview' => array_slice( $rows, 0, 5 ), 'columns' => array_keys( $rows[0] ?? [] ) ] );
+		$source_config = json_decode( $project->source_config, true ) ?: [];
+		$rows = PSEO_DataSource::fetch( $project->source_type, $source_config, 5 );
+		wp_send_json_success( [ 'rows' => $rows, 'count' => count( $rows ) ] );
 	}
 
 	public function save_project(): void {
 		$this->verify();
 
-		/**
-		 * FIX #5 — source_config is a JSON string and must NOT be run through
-		 * sanitize_textarea_field(). That function encodes HTML entities, which
-		 * corrupts the JSON (e.g. '&' in URLs becomes '&amp;'). When the saved
-		 * config is decoded later the URL is broken and DataSource::fetch()
-		 * returns an empty array — causing 0 pages to generate.
-		 *
-		 * Instead we: wp_unslash() the raw POST value, json_decode() it to
-		 * validate structure, sanitize each individual sub-field, then
-		 * re-encode it cleanly for storage.
-		 */
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		$raw_config = wp_unslash( $_POST['source_config'] ?? '{}' );
-		$config_arr = json_decode( $raw_config, true );
-		if ( ! is_array( $config_arr ) ) {
-			$config_arr = [];
+		$project_id  = (int) ( $_POST['project_id'] ?? 0 );
+		$source_type = sanitize_text_field( wp_unslash( $_POST['source_type'] ?? '' ) );
+
+		// Decode and individually sanitize source_config sub-fields (never run json through sanitize_textarea_field).
+		$raw_config = json_decode( wp_unslash( $_POST['source_config'] ?? '{}' ), true ) ?: [];
+		$clean_config = [];
+
+		switch ( $source_type ) {
+			case 'csv_upload':
+				$clean_config['file_url']  = esc_url_raw( $raw_config['file_url'] ?? '' );
+				$clean_config['file_path'] = sanitize_text_field( $raw_config['file_path'] ?? '' );
+				break;
+			case 'csv_url':
+				$clean_config['url'] = esc_url_raw( $raw_config['url'] ?? '' );
+				break;
+			case 'google_sheets':
+				$clean_config['sheet_id'] = sanitize_text_field( $raw_config['sheet_id'] ?? '' );
+				$clean_config['gid']      = sanitize_text_field( $raw_config['gid'] ?? '' );
+				break;
+			case 'rest_api':
+				$clean_config['url']        = esc_url_raw( $raw_config['url'] ?? '' );
+				$clean_config['data_path']  = sanitize_text_field( $raw_config['data_path'] ?? '' );
+				$clean_config['per_page']   = (int) ( $raw_config['per_page'] ?? 100 );
+				$clean_config['max_pages']  = (int) ( $raw_config['max_pages'] ?? 10 );
+				$clean_config['page_param'] = sanitize_text_field( $raw_config['page_param'] ?? 'page' );
+				// Sanitize headers array: only allow string key=>value pairs.
+				if ( ! empty( $raw_config['headers'] ) && is_array( $raw_config['headers'] ) ) {
+					foreach ( $raw_config['headers'] as $k => $v ) {
+						$clean_config['headers'][ sanitize_text_field( $k ) ] = sanitize_text_field( $v );
+					}
+				}
+				break;
+			default:
+				// Passthrough with basic sanitization for unknown source types.
+				array_walk_recursive( $raw_config, function( &$v ) { $v = sanitize_text_field( (string) $v ); } );
+				$clean_config = $raw_config;
 		}
 
-		// Sanitize individual sub-fields that can hold user-controlled data.
-		if ( isset( $config_arr['file_url'] ) ) {
-			$config_arr['file_url'] = esc_url_raw( $config_arr['file_url'] );
-		}
-		if ( isset( $config_arr['file_path'] ) ) {
-			$config_arr['file_path'] = sanitize_text_field( $config_arr['file_path'] );
-		}
-		if ( isset( $config_arr['sheet_id'] ) ) {
-			$config_arr['sheet_id'] = sanitize_text_field( $config_arr['sheet_id'] );
-		}
-		if ( isset( $config_arr['url'] ) ) {
-			$config_arr['url'] = esc_url_raw( $config_arr['url'] );
-		}
-
-		$source_config_clean = wp_json_encode( $config_arr );
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
 		$data = [
 			'name'          => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
-			'post_type'     => sanitize_key( wp_unslash( $_POST['post_type'] ?? 'page' ) ),
-			'template_id'   => (int) ( $_POST['template_id'] ?? 0 ),
-			'source_type'   => sanitize_key( wp_unslash( $_POST['source_type'] ?? 'csv_url' ) ),
-			'source_config' => $source_config_clean,
+			'source_type'   => $source_type,
+			'source_config' => wp_json_encode( $clean_config ),
 			'url_pattern'   => sanitize_text_field( wp_unslash( $_POST['url_pattern'] ?? '' ) ),
-			'seo_title'     => sanitize_text_field( wp_unslash( $_POST['seo_title'] ?? '' ) ),
-			'seo_desc'      => sanitize_textarea_field( wp_unslash( $_POST['seo_desc'] ?? '' ) ),
-			'robots'        => sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
+			'post_type'     => sanitize_key( $_POST['post_type'] ?? 'page' ),
+			'post_status'   => sanitize_key( $_POST['post_status'] ?? 'draft' ),
+			'template'      => wp_kses_post( wp_unslash( $_POST['template'] ?? '' ) ),
 			'schema_type'   => sanitize_text_field( wp_unslash( $_POST['schema_type'] ?? '' ) ),
-			'sync_interval' => sanitize_key( wp_unslash( $_POST['sync_interval'] ?? 'manual' ) ),
+			'seo_title'     => sanitize_text_field( wp_unslash( $_POST['seo_title'] ?? '' ) ),
+			'seo_desc'      => sanitize_text_field( wp_unslash( $_POST['seo_desc'] ?? '' ) ),
+			'robots'        => sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
 		];
 
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		if ( ! empty( $_POST['id'] ) ) $data['id'] = (int) $_POST['id'];
-		wp_send_json_success( [ 'id' => PSEO_Database::save_project( $data ) ] );
+		if ( $project_id ) {
+			PSEO_Database::update_project( $project_id, $data );
+			wp_send_json_success( [ 'project_id' => $project_id, 'action' => 'updated' ] );
+		} else {
+			$project_id = PSEO_Database::create_project( $data );
+			if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Failed to create project.' ] );
+			wp_send_json_success( [ 'project_id' => $project_id, 'action' => 'created' ] );
+		}
 	}
 
 	public function delete_project(): void {
 		$this->verify();
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		$id = (int) ( $_POST['project_id'] ?? 0 );
-		PSEO_Generator::delete_generated( $id );
-		PSEO_Database::delete_project( $id );
-		wp_send_json_success();
+		$project_id = (int) ( $_POST['project_id'] ?? 0 );
+		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
+		PSEO_Database::delete_project( $project_id );
+		wp_send_json_success( [ 'deleted' => true ] );
 	}
 
 	public function upload_csv(): void {
 		$this->verify();
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		if ( empty( $_FILES['csv_file'] ) || $_FILES['csv_file']['error'] !== UPLOAD_ERR_OK ) {
-			wp_send_json_error( [ 'message' => 'No file uploaded or upload error.' ] );
-		}
-
-		// Require WordPress file handling functions.
-		if ( ! function_exists( 'wp_handle_upload' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/file.php';
-		}
-
-		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified in verify().
-		$file             = $_FILES['csv_file'];
-		$upload_overrides = [
-			'test_form' => false,
-			'mimes'     => [ 'csv' => 'text/csv', 'txt' => 'text/plain' ],
-		];
-
-		$uploaded = wp_handle_upload( $file, $upload_overrides );
-		if ( isset( $uploaded['error'] ) ) {
-			wp_send_json_error( [ 'message' => $uploaded['error'] ] );
-		}
-
-		// Insert into media library.
-		$attachment_id = wp_insert_attachment(
-			[
-				'post_mime_type' => $uploaded['type'],
-				'post_title'     => sanitize_file_name( basename( $uploaded['file'] ) ),
-				'post_content'   => '',
-				'post_status'    => 'inherit',
-			],
-			$uploaded['file']
-		);
-
-		if ( is_wp_error( $attachment_id ) ) {
-			wp_send_json_error( [ 'message' => 'Failed to create media attachment.' ] );
-		}
-
-		// Generate attachment metadata.
-		if ( ! function_exists( 'wp_generate_attachment_metadata' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/image.php';
-		}
-		wp_update_attachment_metadata( $attachment_id, wp_generate_attachment_metadata( $attachment_id, $uploaded['file'] ) );
-
-		wp_send_json_success(
-			[
-				'url'      => $uploaded['url'],
-				'filename' => basename( $uploaded['file'] ),
-			]
-		);
+		if ( empty( $_FILES['csv_file'] ) ) wp_send_json_error( [ 'message' => 'No file uploaded.' ] );
+		$file = $_FILES['csv_file'];
+		$mime = wp_check_filetype( $file['name'], [ 'csv' => 'text/csv' ] );
+		if ( ! $mime['type'] ) wp_send_json_error( [ 'message' => 'Invalid file type. Only CSV allowed.' ] );
+		$upload = wp_handle_upload( $file, [ 'test_form' => false, 'mimes' => [ 'csv' => 'text/csv' ] ] );
+		if ( isset( $upload['error'] ) ) wp_send_json_error( [ 'message' => $upload['error'] ] );
+		wp_send_json_success( [ 'url' => $upload['url'], 'file' => $upload['file'] ] );
 	}
 }
