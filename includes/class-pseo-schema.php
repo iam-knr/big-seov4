@@ -22,13 +22,13 @@ class PSEO_Schema {
 
 	public static function build( string $type, array $row, \WP_Post $post ): array {
 		return match ( $type ) {
-			'Article'       => self::article( $row, $post ),
-			'LocalBusiness' => self::local_business( $row, $post ),
-			'Product'       => self::product( $row, $post ),
-			'FAQPage'       => self::faq_page( $row, $post ),
-			'BreadcrumbList'=> self::breadcrumb( $row, $post ),
-			'JobPosting'    => self::job_posting( $row, $post ),
-			default         => [],
+			'Article'        => self::article( $row, $post ),
+			'LocalBusiness'  => self::local_business( $row, $post ),
+			'Product'        => self::product( $row, $post ),
+			'FAQPage'        => self::faq_page( $row, $post ),
+			'BreadcrumbList' => self::breadcrumb( $row, $post ),
+			'JobPosting'     => self::job_posting( $row, $post ),
+			default          => [],
 		};
 	}
 
@@ -72,11 +72,6 @@ class PSEO_Schema {
 		return $s;
 	}
 
-	/**
-	 * FIX #13 — FAQ question and answer values are now sanitized with
-	 * wp_kses_post() before being embedded in JSON-LD output to prevent
-	 * raw HTML tags (including <script>) from reaching the schema block.
-	 */
 	private static function faq_page( array $r, \WP_Post $p ): array {
 		$faqs = []; $i = 1;
 		while ( isset( $r["faq_q_{$i}"], $r["faq_a_{$i}"] ) ) {
@@ -93,19 +88,11 @@ class PSEO_Schema {
 		return empty( $faqs ) ? [] : [ '@context' => 'https://schema.org', '@type' => 'FAQPage', 'mainEntity' => $faqs ];
 	}
 
-	/**
-	 * FIX #12 — BreadcrumbList now includes intermediate URL segments so
-	 * the breadcrumb path matches the actual page URL hierarchy.
-	 * e.g. /services/seo/london/ produces: Home > Services > SEO > London
-	 */
 	private static function breadcrumb( array $r, \WP_Post $p ): array {
-		$items = [];
-		// Build ancestor chain from WordPress post hierarchy.
+		$items     = [];
 		$ancestors = array_reverse( get_post_ancestors( $p ) );
 		$position  = 1;
-		// Always start with Home.
-		$items[] = [ '@type' => 'ListItem', 'position' => $position++, 'name' => __( 'Home', 'knr-pseo-generator' ), 'item' => home_url() ];
-		// Add each ancestor page.
+		$items[]   = [ '@type' => 'ListItem', 'position' => $position++, 'name' => __( 'Home', 'knr-pseo-generator' ), 'item' => home_url() ];
 		foreach ( $ancestors as $ancestor_id ) {
 			$items[] = [
 				'@type'    => 'ListItem',
@@ -114,30 +101,22 @@ class PSEO_Schema {
 				'item'     => get_permalink( $ancestor_id ),
 			];
 		}
-		// Add the current page.
 		$items[] = [ '@type' => 'ListItem', 'position' => $position, 'name' => $p->post_title, 'item' => get_permalink( $p ) ];
 		return [ '@context' => 'https://schema.org', '@type' => 'BreadcrumbList', 'itemListElement' => $items ];
 	}
 
-	/**
-	 * FIX #11 — JobPosting datePosted is now read from the CSV row
-	 * ($r['date_posted']) so it reflects the actual job posting date
-	 * instead of the WordPress page creation/last-generation date.
-	 * Falls back to the post publish date only when the row has no
-	 * date_posted column.
-	 */
 	private static function job_posting( array $r, \WP_Post $p ): array {
-		// Prefer CSV-supplied date; fall back to post date.
+		// PCP FIX: use gmdate() instead of date() to avoid timezone-dependent output.
 		$date_posted = ! empty( $r['date_posted'] )
-			? date( 'c', strtotime( $r['date_posted'] ) )
+			? gmdate( 'c', strtotime( $r['date_posted'] ) )
 			: get_the_date( 'c', $p );
 
 		return [ '@context' => 'https://schema.org', '@type' => 'JobPosting',
-			'title'             => $r['job_title']   ?? $p->post_title,
-			'description'       => $r['description'] ?? '',
-			'datePosted'        => $date_posted,
-			'hiringOrganization'=> [ '@type' => 'Organization', 'name' => $r['company'] ?? get_bloginfo( 'name' ) ],
-			'jobLocation'       => [ '@type' => 'Place', 'address' => [
+			'title'              => $r['job_title']   ?? $p->post_title,
+			'description'        => $r['description'] ?? '',
+			'datePosted'         => $date_posted,
+			'hiringOrganization' => [ '@type' => 'Organization', 'name' => $r['company'] ?? get_bloginfo( 'name' ) ],
+			'jobLocation'        => [ '@type' => 'Place', 'address' => [
 				'@type'           => 'PostalAddress',
 				'addressLocality' => $r['city']    ?? '',
 				'addressRegion'   => $r['state']   ?? '',
