@@ -133,7 +133,7 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                         <div class="pseo-url-preview-wrap">
                             <span class="pseo-url-base"><?php echo esc_html( trailingslashit( home_url() ) ); ?></span>
                             <input type="text" name="url_pattern" class="large-text"
-                                   value="<?php echo esc_html( $project->url_pattern ?? '' ); ?>"
+                                   value="<?php echo esc_attr( $project->url_pattern ?? '' ); ?>"
                                    placeholder="{{service}}/{{city}}">
                         </div>
                         <p class="description">
@@ -156,7 +156,7 @@ $post_types     = get_post_types( [ 'public' => true ], 'objects' );
                     <th><label><?php esc_html_e( 'Title Tag Template', 'knr-pseo-generator' ); ?></label></th>
                     <td>
                         <input type="text" name="seo_title" class="large-text"
-                               value="<?php echo esc_html( $project->seo_title ?? '' ); ?>"
+                               value="<?php echo 180 ?? '' ); ?>"
                                placeholder="Best {{service}} in {{city}} | {{brand}}">
                         <p class="description">Recommended: under 60 characters after placeholder substitution.</p>
                     </td>
