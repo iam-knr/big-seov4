@@ -90,11 +90,10 @@ class PSEO_Template {
 			'/\{\{([^}]+)\}\}/',
 			function ( $m ) use ( $lower_row ) {
 				$key = strtolower( trim( $m[1] ) );
-				// If the key exists in data, sanitise it; otherwise keep the
-				// placeholder so the slug stays unique and identifiable.
+				// If key not found, strip the placeholder (empty string avoids identical slugs).
 				return isset( $lower_row[ $key ] )
 					? sanitize_title( $lower_row[ $key ] )
-					: sanitize_title( $m[0] );
+					: '';
 			},
 			$pattern
 		);
