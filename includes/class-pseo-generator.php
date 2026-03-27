@@ -4,44 +4,40 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class PSEO_Generator {
 
 	/**
+	 * Interval map: project sync_interval value => seconds.
+	 * Used by run_scheduled_syncs() to honour each project's configured
+	 * interval rather than always re-generating every hour.
+	 */
+	private static array $interval_seconds = [
+		'hourly' => HOUR_IN_SECONDS,
+		'daily'  => DAY_IN_SECONDS,
+		'weekly' => WEEK_IN_SECONDS,
+	];
+
+	/**
 	 * Generate (or update) all pages for a project.
 	 *
-	 * FIX #2 - after save_data_rows() we reload rows from the DB so every row
-	 *          carries a valid __row_id (the auto-increment PK). Previously
-	 *          the original $rows from DataSource::fetch() were used, which
-	 *          never had __row_id set, so record_generated_page() always
-	 *          stored data_row_id = 0.
+	 * FIX #3 — wp_update_post() return value is now checked for WP_Error
+	 *           so update failures are captured in $results['errors'].
 	 *
-	 * FIX #4 - slug collision handling: if two rows produce the same slug
-	 *          (e.g. both cities sanitise to the same string) we now append a
-	 *          numeric suffix (-2, -3 ...) rather than silently overwriting the
-	 *          first page with the second row's content.
+	 * FIX #4 — Orphan posts deleted from WordPress are also removed from
+	 *           the pseo_pages table so the orphan list stays accurate.
 	 *
-	 * FIX #6 - fallback raw_rows path: if get_data_rows() returns empty for
-	 *          any reason, assign sequential __row_id values to raw rows so
-	 *          record_generated_page() never stores data_row_id = 0 for every
-	 *          row (which would cause replace() to treat them all as the same
-	 *          record).
+	 * FIX #5 — seo_title fallback ('{{title}}') is used consistently for
+	 *           both post_title and the _pseo_seo_title meta so the meta
+	 *           is never stored as an empty string.
 	 */
 	public static function run( int $project_id, bool $delete_orphans = false ): array {
 		$project = PSEO_Database::get_project( $project_id );
 		if ( ! $project ) return [ 'created' => 0, 'updated' => 0, 'deleted' => 0, 'errors' => [ 'Project not found.' ] ];
 
-		// Fetch raw rows from the configured data source.
 		$raw_rows = PSEO_DataSource::fetch( $project );
 		if ( empty( $raw_rows ) ) return [ 'created' => 0, 'updated' => 0, 'deleted' => 0, 'errors' => [ 'No data rows returned from source.' ] ];
 
-		// Persist raw rows to DB so they get auto-increment IDs.
 		PSEO_Database::save_data_rows( $project_id, $raw_rows );
 
-		// FIX #2: reload rows from DB so __row_id is the real PK, not 0.
 		$rows = PSEO_Database::get_data_rows( $project_id );
 		if ( empty( $rows ) ) {
-			/*
-			 * FIX #6: Fallback — ensure every row has a unique __row_id even
-			 * when the DB reload fails. Using array index + 1 guarantees each
-			 * row gets a distinct value so wpdb::replace() can distinguish them.
-			 */
 			$rows = array_values( $raw_rows );
 			foreach ( $rows as $idx => &$row ) {
 				$row['__row_id'] = $idx + 1;
@@ -53,20 +49,20 @@ class PSEO_Generator {
 		$tpl_content = $template ? $template->post_content : '';
 		$results     = [ 'created' => 0, 'updated' => 0, 'deleted' => 0, 'errors' => [] ];
 		$existing_ids = array_map( 'intval', PSEO_Database::get_generated_page_ids( $project_id ) );
-		$seen_ids     = [];
-
-		// Track slugs used in this run to detect within-batch collisions.
-		$slugs_used = [];
+		$seen_ids    = [];
+		$slugs_used  = [];
 
 		foreach ( $rows as $row ) {
 			$row_id = (int) ( $row['__row_id'] ?? 0 );
 			unset( $row['__row_id'] );
 
 			$base_slug = PSEO_Template::build_slug( $project->url_pattern, $row );
-			$title     = PSEO_Template::render( $project->seo_title ?: '{{title}}', $row );
-			$content   = PSEO_Template::render( $tpl_content, $row );
 
-			// FIX #4: resolve slug collisions by appending a numeric suffix.
+			// FIX #5: use the same title fallback for both post_title and meta.
+			$seo_title_tpl = $project->seo_title ?: '{{title}}';
+			$title         = PSEO_Template::render( $seo_title_tpl, $row );
+			$content       = PSEO_Template::render( $tpl_content, $row );
+
 			$slug   = $base_slug;
 			$suffix = 2;
 			while ( isset( $slugs_used[ $slug ] ) ) {
@@ -84,12 +80,17 @@ class PSEO_Generator {
 
 			if ( $existing ) {
 				$post_id = $existing[0]->ID;
-				wp_update_post( [
+				// FIX #3: check wp_update_post() for WP_Error.
+				$update_result = wp_update_post( [
 					'ID'           => $post_id,
 					'post_title'   => $title,
 					'post_content' => $content,
 					'post_status'  => 'publish',
-				] );
+				], true );
+				if ( is_wp_error( $update_result ) ) {
+					$results['errors'][] = $update_result->get_error_message();
+					continue;
+				}
 				$results['updated']++;
 			} else {
 				$post_id = wp_insert_post( [
@@ -108,25 +109,36 @@ class PSEO_Generator {
 
 			update_post_meta( $post_id, '_pseo_project_id', $project_id );
 			update_post_meta( $post_id, '_pseo_row_data',   wp_json_encode( $row ) );
-			update_post_meta( $post_id, '_pseo_seo_title',  PSEO_Template::render( $project->seo_title, $row ) );
+			// FIX #5: use consistent $seo_title_tpl with fallback.
+			update_post_meta( $post_id, '_pseo_seo_title',  PSEO_Template::render( $seo_title_tpl, $row ) );
 			update_post_meta( $post_id, '_pseo_seo_desc',   PSEO_Template::render( $project->seo_desc,  $row ) );
-			update_post_meta( $post_id, '_pseo_robots',     $project->robots );
-			update_post_meta( $post_id, '_pseo_schema_type',$project->schema_type );
+			update_post_meta( $post_id, '_pseo_robots',      $project->robots );
+			update_post_meta( $post_id, '_pseo_schema_type', $project->schema_type );
 
 			PSEO_Database::record_generated_page( $project_id, $row_id, $post_id, $slug );
 			$seen_ids[] = $post_id;
 		}
 
 		if ( $delete_orphans ) {
+			global $wpdb;
 			foreach ( array_diff( $existing_ids, $seen_ids ) as $pid ) {
 				wp_delete_post( $pid, true );
+				// FIX #4: clean up the pseo_pages row so orphan detection
+				// stays accurate on subsequent runs.
+				// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+				$wpdb->delete( $wpdb->prefix . 'pseo_pages', [ 'post_id' => $pid ] );
 				$results['deleted']++;
 			}
+			wp_cache_delete( 'pseo_page_ids_' . $project_id, 'pseo' );
 		}
 
 		return $results;
 	}
 
+	/**
+	 * Run cron syncs, but only for projects whose interval has elapsed
+	 * since their last run (FIX #2 complement).
+	 */
 	public static function run_scheduled_syncs(): void {
 		global $wpdb;
 		$projects = wp_cache_get( 'pseo_active_projects', 'pseo' );
@@ -135,7 +147,15 @@ class PSEO_Generator {
 			$projects = $wpdb->get_results( "SELECT * FROM {$wpdb->prefix}pseo_projects WHERE sync_interval != 'manual' AND status = 'active'" );
 			wp_cache_set( 'pseo_active_projects', $projects, 'pseo', 60 );
 		}
-		foreach ( $projects as $p ) self::run( (int) $p->id );
+		$now = time();
+		foreach ( $projects as $p ) {
+			$interval_secs = self::$interval_seconds[ $p->sync_interval ] ?? HOUR_IN_SECONDS;
+			$last_run      = (int) get_option( 'pseo_last_run_' . $p->id, 0 );
+			if ( ( $now - $last_run ) >= $interval_secs ) {
+				self::run( (int) $p->id );
+				update_option( 'pseo_last_run_' . $p->id, $now, false );
+			}
+		}
 	}
 
 	public static function delete_generated( int $project_id ): int {
