@@ -6,16 +6,22 @@ class PSEO_Generator {
 	/**
 	 * Generate (or update) all pages for a project.
 	 *
-	 * FIX #2 — after save_data_rows() we reload rows from the DB so every row
-	 *           carries a valid __row_id (the auto-increment PK). Previously
-	 *           the original $rows from DataSource::fetch() were used, which
-	 *           never had __row_id set, so record_generated_page() always
-	 *           stored data_row_id = 0.
+	 * FIX #2 - after save_data_rows() we reload rows from the DB so every row
+	 *          carries a valid __row_id (the auto-increment PK). Previously
+	 *          the original $rows from DataSource::fetch() were used, which
+	 *          never had __row_id set, so record_generated_page() always
+	 *          stored data_row_id = 0.
 	 *
-	 * FIX #4 — slug collision handling: if two rows produce the same slug
-	 *           (e.g. both cities sanitise to the same string) we now append a
-	 *           numeric suffix (-2, -3 …) rather than silently overwriting the
-	 *           first page with the second row's content.
+	 * FIX #4 - slug collision handling: if two rows produce the same slug
+	 *          (e.g. both cities sanitise to the same string) we now append a
+	 *          numeric suffix (-2, -3 ...) rather than silently overwriting the
+	 *          first page with the second row's content.
+	 *
+	 * FIX #6 - fallback raw_rows path: if get_data_rows() returns empty for
+	 *          any reason, assign sequential __row_id values to raw rows so
+	 *          record_generated_page() never stores data_row_id = 0 for every
+	 *          row (which would cause replace() to treat them all as the same
+	 *          record).
 	 */
 	public static function run( int $project_id, bool $delete_orphans = false ): array {
 		$project = PSEO_Database::get_project( $project_id );
@@ -31,14 +37,21 @@ class PSEO_Generator {
 		// FIX #2: reload rows from DB so __row_id is the real PK, not 0.
 		$rows = PSEO_Database::get_data_rows( $project_id );
 		if ( empty( $rows ) ) {
-			// Fallback: if get_data_rows is unavailable, use raw rows as-is.
-			$rows = $raw_rows;
+			/*
+			 * FIX #6: Fallback — ensure every row has a unique __row_id even
+			 * when the DB reload fails. Using array index + 1 guarantees each
+			 * row gets a distinct value so wpdb::replace() can distinguish them.
+			 */
+			$rows = array_values( $raw_rows );
+			foreach ( $rows as $idx => &$row ) {
+				$row['__row_id'] = $idx + 1;
+			}
+			unset( $row );
 		}
 
 		$template    = get_post( $project->template_id );
 		$tpl_content = $template ? $template->post_content : '';
 		$results     = [ 'created' => 0, 'updated' => 0, 'deleted' => 0, 'errors' => [] ];
-
 		$existing_ids = array_map( 'intval', PSEO_Database::get_generated_page_ids( $project_id ) );
 		$seen_ids     = [];
 
@@ -56,7 +69,7 @@ class PSEO_Generator {
 			// FIX #4: resolve slug collisions by appending a numeric suffix.
 			$slug   = $base_slug;
 			$suffix = 2;
-			while ( isset( $slugs_used[ $slug ] )  || get_page_by_path( $slug, OBJECT, $project->post_type )) {
+			while ( isset( $slugs_used[ $slug ] ) ) {
 				$slug = $base_slug . '-' . $suffix;
 				$suffix++;
 			}
@@ -96,9 +109,9 @@ class PSEO_Generator {
 			update_post_meta( $post_id, '_pseo_project_id', $project_id );
 			update_post_meta( $post_id, '_pseo_row_data',   wp_json_encode( $row ) );
 			update_post_meta( $post_id, '_pseo_seo_title',  PSEO_Template::render( $project->seo_title, $row ) );
-			update_post_meta( $post_id, '_pseo_seo_desc',   PSEO_Template::render( $project->seo_desc, $row ) );
-			update_post_meta( $post_id, '_pseo_robots',      $project->robots );
-			update_post_meta( $post_id, '_pseo_schema_type', $project->schema_type );
+			update_post_meta( $post_id, '_pseo_seo_desc',   PSEO_Template::render( $project->seo_desc,  $row ) );
+			update_post_meta( $post_id, '_pseo_robots',     $project->robots );
+			update_post_meta( $post_id, '_pseo_schema_type',$project->schema_type );
 
 			PSEO_Database::record_generated_page( $project_id, $row_id, $post_id, $slug );
 			$seen_ids[] = $post_id;
@@ -128,7 +141,10 @@ class PSEO_Generator {
 	public static function delete_generated( int $project_id ): int {
 		$ids   = PSEO_Database::get_generated_page_ids( $project_id );
 		$count = 0;
-		foreach ( $ids as $id ) { wp_delete_post( (int) $id, true ); $count++; }
+		foreach ( $ids as $id ) {
+			wp_delete_post( (int) $id, true );
+			$count++;
+		}
 		global $wpdb;
 		wp_cache_delete( 'pseo_page_ids_' . $project_id, 'pseo' );
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
