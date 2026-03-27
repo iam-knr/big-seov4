@@ -15,9 +15,10 @@ class PSEO_Ajax {
 
 	public function generate(): void {
 		$this->verify();
-		$project_id = (int) ( $_POST['project_id'] ?? 0 );
+		$project_id    = (int) ( $_POST['project_id'] ?? 0 );
+		$delete_orphans = ! empty( $_POST['delete_orphans'] );
 		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
-		$result = PSEO_Generator::run( $project_id );
+		$result = PSEO_Generator::run( $project_id, $delete_orphans );
 		wp_send_json_success( $result );
 	}
 
@@ -25,7 +26,6 @@ class PSEO_Ajax {
 		$this->verify();
 		$project_id = (int) ( $_POST['project_id'] ?? 0 );
 		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
-		// FIXED: method is delete_generated(), not delete_pages()
 		$deleted = PSEO_Generator::delete_generated( $project_id );
 		wp_send_json_success( [ 'deleted' => $deleted ] );
 	}
@@ -34,31 +34,31 @@ class PSEO_Ajax {
 		$this->verify();
 		$project_id = (int) ( $_POST['project_id'] ?? 0 );
 		if ( ! $project_id ) wp_send_json_error( [ 'message' => 'Missing project ID.' ] );
-		// FIXED: fetch() takes a project object, not (source_type, config, limit)
 		$project = PSEO_Database::get_project( $project_id );
 		if ( ! $project ) wp_send_json_error( [ 'message' => 'Project not found.' ] );
-		$rows = PSEO_DataSource::fetch( $project );
-		$rows = array_slice( $rows, 0, 5 );
-		wp_send_json_success( [ 'rows' => $rows, 'count' => count( $rows ) ] );
+		$all_rows = PSEO_DataSource::fetch( $project );
+		$total    = count( $all_rows );
+		$preview  = array_slice( $all_rows, 0, 5 );
+		$columns  = ! empty( $preview ) ? array_keys( $preview[0] ) : [];
+		wp_send_json_success( [ 'rows' => $preview, 'preview' => $preview, 'columns' => $columns, 'count' => $total ] );
 	}
 
 	public function save_project(): void {
 		$this->verify();
-
-		$project_id  = (int) ( $_POST['project_id'] ?? 0 );
+		$project_id  = (int) ( $_POST['id'] ?? $_POST['project_id'] ?? 0 );
 		$source_type = sanitize_text_field( wp_unslash( $_POST['source_type'] ?? '' ) );
 
 		// Decode and individually sanitize source_config sub-fields.
 		$raw_config   = json_decode( wp_unslash( $_POST['source_config'] ?? '{}' ), true ) ?: [];
 		$clean_config = [];
-
 		switch ( $source_type ) {
 			case 'csv_upload':
 				$clean_config['file_url']  = esc_url_raw( $raw_config['file_url'] ?? '' );
 				$clean_config['file_path'] = sanitize_text_field( $raw_config['file_path'] ?? '' );
 				break;
 			case 'csv_url':
-				$clean_config['url'] = esc_url_raw( $raw_config['url'] ?? '' );
+				// FIX: DataSource::fetch_csv() reads $config['file_url'], not $config['url'].
+				$clean_config['file_url'] = esc_url_raw( $raw_config['file_url'] ?? $raw_config['url'] ?? '' );
 				break;
 			case 'google_sheets':
 				$clean_config['sheet_id'] = sanitize_text_field( $raw_config['sheet_id'] ?? '' );
@@ -82,25 +82,26 @@ class PSEO_Ajax {
 		}
 
 		$data = [
-			'id'            => $project_id, // FIXED: DB::save_project() needs 'id' to decide insert vs update
+			'id'            => $project_id, // needed by save_project() to decide insert vs update
 			'name'          => sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ),
 			'source_type'   => $source_type,
 			'source_config' => wp_json_encode( $clean_config ),
 			'url_pattern'   => sanitize_text_field( wp_unslash( $_POST['url_pattern'] ?? '' ) ),
 			'post_type'     => sanitize_key( $_POST['post_type'] ?? 'page' ),
-			'post_status'   => sanitize_key( $_POST['post_status'] ?? 'draft' ),
-			'template'      => wp_kses_post( wp_unslash( $_POST['template'] ?? '' ) ),
+			'template_id'   => (int) ( $_POST['template_id'] ?? 0 ), // FIX: was 'template' (wrong key + no cast)
 			'schema_type'   => sanitize_text_field( wp_unslash( $_POST['schema_type'] ?? '' ) ),
 			'seo_title'     => sanitize_text_field( wp_unslash( $_POST['seo_title'] ?? '' ) ),
 			'seo_desc'      => sanitize_text_field( wp_unslash( $_POST['seo_desc'] ?? '' ) ),
 			'robots'        => sanitize_text_field( wp_unslash( $_POST['robots'] ?? 'index,follow' ) ),
+			'sync_interval' => sanitize_key( $_POST['sync_interval'] ?? 'manual' ), // FIX: was missing
 		];
+		// FIX: 'post_status' is not a column in pseo_projects — removed to prevent DB error.
 
-		// FIXED: DB class has save_project( $data ), not create_project/update_project
 		$saved_id = PSEO_Database::save_project( $data );
 		if ( ! $saved_id ) wp_send_json_error( [ 'message' => 'Failed to save project.' ] );
 		$action = $project_id ? 'updated' : 'created';
-		wp_send_json_success( [ 'project_id' => $saved_id, 'action' => $action ] );
+		// FIX: JS reads data.id, not data.project_id.
+		wp_send_json_success( [ 'id' => $saved_id, 'project_id' => $saved_id, 'action' => $action ] );
 	}
 
 	public function delete_project(): void {
